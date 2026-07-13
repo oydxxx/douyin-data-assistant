@@ -1,12 +1,50 @@
 const MAX_RECORDS = 200;
 const MAX_RESPONSE_CHARS = 2_000_000;
 const HANDOFF_DELAY_MS = 1_500;
+const CAPTURE_VERSION = 2;
 const sessions = new Map();
 let handoffTimer;
 
 function isDouyinApi(url, type) {
   return url.startsWith('https://creator.douyin.com/') &&
-    (type === 'XHR' || type === 'Fetch') && /api|arithmetic-index|creator-count/i.test(url);
+    (type === 'XHR' || type === 'Fetch');
+}
+
+// 只接受“关联词列表 + 指标”的响应。不要再因为 URL 中含有 api 就整包保存。
+const ASSOCIATION_URL_HINT = /related|relation|associate|correl|relevance|keyword|search(?:[-_]?word)?|arithmetic-index/i;
+const ASSOCIATION_PAYLOAD_HINT = /related|relation|associate|correl|relevance|\u5173\u8054|\u76f8\u5173|\u5173\u952e\u8bcd/i;
+const TERM_FIELD_HINT = /(^|[_-])(related_?)?(word|keyword|query|term|search_word)([_-]|$)|\u5173\u8054\u8bcd|\u5173\u952e\u8bcd|\u8bcd\u6761/i;
+const METRIC_FIELD_HINT = /index|score|relevance|rank|count|heat|hot|trend|\u6307\u6570|\u70ed\u5ea6|\u76f8\u5173\u5ea6|\u641c\u7d22\u91cf/i;
+
+function normalizeText(value) {
+  return String(value ?? '').trim().replace(/\s+/g, ' ').toLowerCase();
+}
+
+function collectAssociationTerms(value, terms = [], depth = 0) {
+  if (depth > 10 || value == null || typeof value !== 'object') return terms;
+  if (Array.isArray(value)) {
+    for (const item of value) collectAssociationTerms(item, terms, depth + 1);
+    return terms;
+  }
+
+  const entries = Object.entries(value);
+  const hasMetric = entries.some(([key]) => METRIC_FIELD_HINT.test(key));
+  const rowTerms = entries
+    .filter(([key, item]) => TERM_FIELD_HINT.test(key) && (typeof item === 'string' || typeof item === 'number'))
+    .map(([, item]) => normalizeText(item))
+    .filter(Boolean);
+  if (hasMetric && rowTerms.length) terms.push(...rowTerms);
+
+  for (const [, item] of entries) collectAssociationTerms(item, terms, depth + 1);
+  return terms;
+}
+
+function associationSignature(url, payload) {
+  const payloadText = JSON.stringify(payload);
+  const hasAssociationHint = ASSOCIATION_URL_HINT.test(url) || ASSOCIATION_PAYLOAD_HINT.test(payloadText);
+  if (!hasAssociationHint) return null;
+  const terms = [...new Set(collectAssociationTerms(payload))].sort();
+  return terms.length ? terms.join('|') : null;
 }
 
 async function recordId(url, body) {
@@ -17,7 +55,8 @@ async function recordId(url, body) {
 
 async function getRecords() {
   const { capturedRecords = [] } = await chrome.storage.local.get('capturedRecords');
-  return capturedRecords;
+  // 旧版会抓到不相关接口。保留在浏览器本地但不再交给 Agent 导入。
+  return capturedRecords.filter((record) => record.captureVersion === CAPTURE_VERSION);
 }
 
 async function saveRecord(record) {
@@ -63,10 +102,13 @@ chrome.debugger.onEvent.addListener(async (source, method, params) => {
     );
     if (base64Encoded || body.length > MAX_RESPONSE_CHARS) return;
     const payload = JSON.parse(body);
+    const signature = associationSignature(response.url, payload);
+    if (!signature) return;
     const id = await recordId(response.url, body);
     const tab = await chrome.tabs.get(source.tabId);
     await saveRecord({
       id,
+      captureVersion: CAPTURE_VERSION,
       capturedAt: new Date().toISOString(),
       sourceUrl: tab.url || '',
       apiUrl: response.url,
