@@ -1,0 +1,9 @@
+:root { color: #18212f; font: 14px/1.45 -apple-system, BlinkMacSystemFont, "PingFang SC", sans-serif; }
+body { width: 310px; margin: 0; background: #f7f8fb; }
+main { padding: 18px; }
+h1 { margin: 0 0 12px; font-size: 18px; } h1 span { color: #6f7785; font-size: 12px; font-weight: 500; }
+.status { margin: 0; color: #2f7d4a; font-weight: 600; white-space: pre-line; }.hint { margin: 10px 0 16px; color: #647084; font-size: 12px; } button[hidden] { display: none; }
+.actions { display: flex; gap: 8px; margin-top: 9px; }.actions button { flex: 1; }.footer { margin-top: 14px; }
+button { border: 0; border-radius: 8px; background: #2668e8; color: #fff; cursor: pointer; padding: 9px 10px; font: inherit; font-weight: 600; }
+button:hover { filter: brightness(.96); } button.secondary { background: #e7edf9; color: #2457b5; } button.text { background: transparent; color: #647084; padding: 5px; font-weight: 500; }
+#message { min-height: 18px; margin: 12px 0 0; color: #647084; font-size: 12px; }

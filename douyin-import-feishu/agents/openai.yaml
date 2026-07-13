@@ -1,0 +1,4 @@
+interface:
+  display_name: "抖音数据导入飞书多维表格助手"
+  short_description: "把抖音数据助手采集的 JSON 自动整理并写入飞书多维表格"
+  default_prompt: "将抖音数据助手自动交接的最新数据整理并写入已有飞书多维表格。"

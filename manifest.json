@@ -1,0 +1,13 @@
+{
+  "manifest_version": 3,
+  "name": "抖音数据助手（个人版）",
+  "version": "0.5.0",
+  "description": "在你已登录的抖音数据页面采集浏览器返回的数据，并自动交给 Codex。",
+  "permissions": ["activeTab", "debugger", "downloads", "storage", "tabs", "offscreen"],
+  "host_permissions": [
+    "https://creator.douyin.com/*"
+  ],
+  "background": { "service_worker": "background.js", "type": "module" },
+  "action": { "default_popup": "popup.html", "default_title": "抖音数据助手（个人版）" },
+  "options_ui": { "page": "options.html", "open_in_tab": true }
+}
