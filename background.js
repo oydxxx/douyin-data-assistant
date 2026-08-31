@@ -1,9 +1,14 @@
-const MAX_RECORDS = 200;
+import {
+  MAX_RECORDS,
+  buildHandoffPacket,
+} from './protocol.mjs';
+
 const MAX_RESPONSE_CHARS = 2_000_000;
 const HANDOFF_DELAY_MS = 1_500;
 const CAPTURE_VERSION = 2;
 const sessions = new Map();
 let handoffTimer;
+let saveQueue = Promise.resolve();
 
 function isDouyinApi(url, type) {
   return url.startsWith('https://creator.douyin.com/') &&
@@ -60,11 +65,25 @@ async function getRecords() {
 }
 
 async function saveRecord(record) {
-  const records = await getRecords();
-  if (records.some((item) => item.id === record.id)) return false;
-  await chrome.storage.local.set({ capturedRecords: [...records, record].slice(-MAX_RECORDS) });
-  scheduleHandoff();
-  return true;
+  const operation = saveQueue.then(async () => {
+    const records = await getRecords();
+    if (records.some((item) => item.id === record.id)) return { saved: false, reason: 'duplicate' };
+    if (records.length >= MAX_RECORDS) {
+      await chrome.storage.local.set({
+        captureWarning: {
+          type: 'max_records_reached',
+          message: `已达到单批 ${MAX_RECORDS} 条上限，请先导入或清空后继续采集。`,
+          recordedAt: new Date().toISOString(),
+        },
+      });
+      return { saved: false, reason: 'max_records_reached' };
+    }
+    await chrome.storage.local.set({ capturedRecords: [...records, record] });
+    scheduleHandoff();
+    return { saved: true };
+  });
+  saveQueue = operation.catch(() => {});
+  return operation;
 }
 
 async function startCapture(tabId) {
@@ -106,7 +125,7 @@ chrome.debugger.onEvent.addListener(async (source, method, params) => {
     if (!signature) return;
     const id = await recordId(response.url, body);
     const tab = await chrome.tabs.get(source.tabId);
-    await saveRecord({
+    const result = await saveRecord({
       id,
       captureVersion: CAPTURE_VERSION,
       capturedAt: new Date().toISOString(),
@@ -115,6 +134,9 @@ chrome.debugger.onEvent.addListener(async (source, method, params) => {
       status: response.status,
       payload
     });
+    if (!result.saved && result.reason === 'max_records_reached') {
+      console.warn(`已达到单批 ${MAX_RECORDS} 条上限。`);
+    }
   } catch (error) {
     console.debug('跳过无法读取的返回数据。', error);
   }
@@ -129,17 +151,24 @@ chrome.tabs.onUpdated.addListener((tabId, changeInfo, tab) => {
 });
 
 function handoffPacket(records) {
-  return {
-    format: 'douyin-data-assistant/v1',
-    exportedAt: new Date().toISOString(),
-    records
-  };
+  return buildHandoffPacket(records, {
+    batchId: `batch-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+  });
 }
 
 function scheduleHandoff() {
   clearTimeout(handoffTimer);
   handoffTimer = setTimeout(() => {
-    void writeAgentHandoff().catch((error) => console.debug('无法更新 Agent 交接文件。', error));
+    void writeAgentHandoff().catch(async (error) => {
+      console.debug('无法更新 Agent 交接文件。', error);
+      await chrome.storage.local.set({
+        handoffState: {
+          status: 'error',
+          message: error instanceof Error ? error.message : String(error),
+          failedAt: new Date().toISOString(),
+        },
+      });
+    });
   }, HANDOFF_DELAY_MS);
 }
 
@@ -159,13 +188,21 @@ async function requestDownload({ content, filename, saveAs, conflictAction }) {
 async function writeAgentHandoff() {
   const records = await getRecords();
   if (!records.length) return { ok: false, message: '还没有可交接的数据。' };
+  const packet = handoffPacket(records);
   await requestDownload({
-    content: JSON.stringify(handoffPacket(records), null, 2),
+    content: JSON.stringify(packet, null, 2),
     filename: 'douyin-data-assistant/agent-handoff.json',
     saveAs: false,
     conflictAction: 'overwrite'
   });
-  return { ok: true, message: '数据已自动交给 Agent。' };
+  const handoff = {
+    status: 'written',
+    batchId: packet.batchId,
+    recordCount: packet.recordCount,
+    writtenAt: packet.exportedAt,
+  };
+  await chrome.storage.local.set({ handoffState: handoff });
+  return { ok: true, message: '数据已自动交给 Agent。', handoff };
 }
 
 async function ensureDownloadDocument() {
@@ -185,11 +222,18 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
       if (message.tabId) await startCapture(message.tabId);
       const records = await getRecords();
       if (records.length) scheduleHandoff();
-      return { ok: true, active: sessions.has(message.tabId), count: records.length };
+      const state = await chrome.storage.local.get(['handoffState', 'captureWarning']);
+      return {
+        ok: true,
+        active: sessions.has(message.tabId),
+        count: records.length,
+        handoff: state.handoffState || null,
+        warning: state.captureWarning || null,
+      };
     }
     if (message.type === 'CLEAR') {
       clearTimeout(handoffTimer);
-      await chrome.storage.local.remove('capturedRecords');
+      await chrome.storage.local.remove(['capturedRecords', 'handoffState', 'captureWarning']);
       return { ok: true, message: '本地采集数据已清空。' };
     }
     return { ok: false, message: '未知操作。' };

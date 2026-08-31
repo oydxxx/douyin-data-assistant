@@ -31,7 +31,7 @@
 
 当且仅当用户明确说“导入飞书”“写入飞书”或等价指令时执行以下步骤：
 
-1. 自动寻找最新交接文件：优先读取 `~/Downloads/douyin-data-assistant/agent-handoff.json`；若下载目录被修改，则按 JSON 标识 `"format":"douyin-data-assistant/v1"` 查找最新文件。
+1. 自动寻找最新交接文件：优先读取 `~/Downloads/douyin-data-assistant/agent-handoff.json`；若下载目录被修改，则按 JSON 标识 `"format":"douyin-data-assistant/v2"` 查找最新文件。
 2. 验证文件存在、格式正确，并报告将要导入的记录数量。
 3. 从当前对话或已保存配置读取目标飞书 Base 和数据表。目标不明确时，列出用户可访问的数据表，让用户只选择一次；不要新建表。
 4. 读取目标表字段和采集 JSON 的实际结构。根据字段含义映射关键词、关联词、指标、时间范围等有效数据；不要把整段原始 JSON 写进不相符的业务表。
